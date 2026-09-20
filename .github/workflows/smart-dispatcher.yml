@@ -1,0 +1,148 @@
+name: Smart Dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      risk_level:
+        description: "Select the risk level"
+        required: true
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+          - critical
+        default: low
+
+      notify:
+        description: "Notify the on-call engineer"
+        required: true
+        type: boolean
+        default: false
+
+      dry_run:
+        description: "Run in dry-run mode"
+        required: true
+        type: boolean
+        default: false
+
+      owner:
+        description: "Owner name"
+        required: true
+        type: string
+
+      components:
+        description: "Comma-separated components"
+        required: true
+        type: string
+
+run-name: >-
+  ${{ format(
+    '{0} | {1} | {2}',
+    inputs.risk_level,
+    inputs.owner,
+    inputs.dry_run && 'DRY-RUN' || 'LIVE'
+  ) }}
+
+jobs:
+
+  classify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print components
+        run: echo "Components: ${{ inputs.components }}"
+
+      - name: Check database component
+        run: |
+          if [[ "${{ inputs.components }}" == *"database"* ]]; then
+            echo "Database mentioned: YES"
+          else
+            echo "Database mentioned: NO"
+          fi
+
+      - name: Check auth component
+        run: |
+          if [[ "${{ inputs.components }}" == *"auth"* ]]; then
+            echo "Auth mentioned: YES"
+          else
+            echo "Auth mentioned: NO"
+          fi
+
+      - name: Check owner and trailing comma
+        run: |
+          if [[ "${{ inputs.owner }}" == A* ]]; then
+            echo "Owner starts with capital A: YES"
+          else
+            echo "Owner starts with capital A: NO"
+          fi
+
+          if [[ "${{ inputs.components }}" == *, ]]; then
+            echo "Components ends with comma: YES"
+          else
+            echo "Components ends with comma: NO"
+          fi
+
+      - name: Natural format sentence
+        run: |
+          echo "${{ format('Risk level is {0}, owner is {1}, and components are {2}.', inputs.risk_level, inputs.owner, inputs.components) }}"
+
+  gate:
+    needs: classify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: High or critical database gate
+        if: ${{ (inputs.risk_level == 'high' || inputs.risk_level == 'critical') && contains(inputs.components, 'database') }}
+        run: echo "Gate 1 satisfied: risk is high/critical and components include database."
+
+      - name: Critical or notify gate
+        if: ${{ inputs.risk_level == 'critical' || inputs.notify }}
+        run: echo "Gate 2 satisfied: risk is critical or notify is enabled."
+
+      - name: Non-low non-dry-run gate
+        if: ${{ !inputs.dry_run && inputs.risk_level != 'low' }}
+        run: echo "Gate 3 satisfied: dry_run is false and risk level is not low."
+
+  execute:
+    needs: gate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Step A - Forced dry-run failure
+        id: forced_failure
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run detected: deliberately failing execution."
+          exit 1
+
+      - name: Step B - Dry run stopped
+        if: ${{ failure() }}
+        run: echo "Dry run stopped before execution"
+
+      - name: Step C - Execution proceeded
+        if: ${{ success() && !failure() }}
+        run: echo "Execution proceeded"
+
+      - name: Step D - Execution summary
+        if: ${{ always() }}
+        run: |
+          echo "Gate result: ${{ needs.gate.result }}"
+          echo "Execute job status: ${{ job.status }}"
+
+  close:
+    needs:
+      - classify
+      - gate
+      - execute
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Closing summary
+        run: |
+          echo "${{ format('Risk: {0}, Owner: {1}, Dry run: {2} — CLOSED', inputs.risk_level, inputs.owner, inputs.dry_run) }}"
+
+      - name: Dispatcher closed
+        run: echo "Dispatcher closed"
