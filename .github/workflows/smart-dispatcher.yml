@@ -39,9 +39,12 @@ on:
 run-name: >-
   ${{ format(
     '{0} | {1} | {2}',
-    inputs.risk_level,
+    inputs.risk_level == 'low' && 'LOW' ||
+    inputs.risk_level == 'medium' && 'MEDIUM' ||
+    inputs.risk_level == 'high' && 'HIGH' ||
+    'CRITICAL',
     inputs.owner,
-    inputs.dry_run && 'DRY-RUN' || 'LIVE'
+    inputs.dry_run && 'DRY-RUN' || ''
   ) }}
 
 jobs:
@@ -53,35 +56,16 @@ jobs:
       - name: Print components
         run: echo "Components: ${{ inputs.components }}"
 
-      - name: Check database component
-        run: |
-          if [[ "${{ inputs.components }}" == *"database"* ]]; then
-            echo "Database mentioned: YES"
-          else
-            echo "Database mentioned: NO"
-          fi
+      - name: Check database
+        run: echo "Database mentioned: ${{ contains(inputs.components, 'database') }}"
 
-      - name: Check auth component
-        run: |
-          if [[ "${{ inputs.components }}" == *"auth"* ]]; then
-            echo "Auth mentioned: YES"
-          else
-            echo "Auth mentioned: NO"
-          fi
+      - name: Check auth
+        run: echo "Auth mentioned: ${{ contains(inputs.components, 'auth') }}"
 
-      - name: Check owner and trailing comma
+      - name: Check startsWith and endsWith
         run: |
-          if [[ "${{ inputs.owner }}" == A* ]]; then
-            echo "Owner starts with capital A: YES"
-          else
-            echo "Owner starts with capital A: NO"
-          fi
-
-          if [[ "${{ inputs.components }}" == *, ]]; then
-            echo "Components ends with comma: YES"
-          else
-            echo "Components ends with comma: NO"
-          fi
+          echo "Owner starts with capital A: ${{ startsWith(inputs.owner, 'A') }}"
+          echo "Components ends with comma: ${{ endsWith(inputs.components, ',') }}"
 
       - name: Natural format sentence
         run: |
@@ -92,17 +76,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: High or critical database gate
+      - name: High or critical database
         if: ${{ (inputs.risk_level == 'high' || inputs.risk_level == 'critical') && contains(inputs.components, 'database') }}
-        run: echo "Gate 1 satisfied: risk is high/critical and components include database."
+        run: echo "Gate 1 satisfied: high/critical risk with database component."
 
-      - name: Critical or notify gate
+      - name: Critical or notify
         if: ${{ inputs.risk_level == 'critical' || inputs.notify }}
-        run: echo "Gate 2 satisfied: risk is critical or notify is enabled."
+        run: echo "Gate 2 satisfied: critical risk or notify is enabled."
 
-      - name: Non-low non-dry-run gate
+      - name: Non-low and not dry-run
         if: ${{ !inputs.dry_run && inputs.risk_level != 'low' }}
-        run: echo "Gate 3 satisfied: dry_run is false and risk level is not low."
+        run: echo "Gate 3 satisfied: risk is not low and dry_run is disabled."
 
   execute:
     needs: gate
@@ -110,11 +94,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Step A - Forced dry-run failure
-        id: forced_failure
+      - name: Step A - Force failure during dry-run
         if: ${{ inputs.dry_run }}
         run: |
-          echo "Dry run detected: deliberately failing execution."
+          echo "Dry run detected. Forcing a failure."
           exit 1
 
       - name: Step B - Dry run stopped
